@@ -1,0 +1,38 @@
+## all run in bash, make sure bioconda, featureCounts, and STAR are installed ##
+
+#============================================================================ index genome ============================================================================#
+
+#to create new genome index you will need the fasta genome file and gtf annotation file
+#useful video of how to start indexing genome with STAR
+www.youtube.com/watch?v=oRC406tbB8w
+
+#download mm10 genome (https://hgdownload.soe.ucsc.edu/goldenPath/mm10/bigZips/)
+wget https://hgdownload.soe.ucsc.edu/goldenPath/mm10/bigZips/mm10.fa.gz
+
+#download mm10 gtf file (https://hgdownload.soe.ucsc.edu/goldenPath/mm10/bigZips/genes/)
+wget https://hgdownload.soe.ucsc.edu/goldenPath/mm10/bigZips/genes/mm10.knownGene.gtf.gz
+
+#unzip fasta and gtf file
+gunzip *.gz
+
+#generate genome index with STAR commands
+STAR --runMode genomeGenerate --genomeDir star_ref/ --genomeFastaFiles mm10.fa --sjdbGTFfile mm10_knownGene.gtf --runThreadN 16
+
+#generate genome index with STAR commands
+STAR --runMode genomeGenerate --genomeDir star_ref/ --genomeFastaFiles mm10.fa --sjdbGTFfile mm10_knownGene.gtf --runThreadN 16
+
+
+
+
+#make sure to unzip fastq before alignment (gunzip *.gz)
+#run STAR alignment (concatenate paired end reads with both fq files into one bam output)
+STAR --runThreadN 12 --genomeDir star_ref_mm10 --readFilesIn fastq/RNA1FDW_1.fq,fastq/RNA1FDW_2.fq --outFileNamePrefix RNA1FDW --outSAMtype BAM Unsorted
+
+#sort bam files prior to using featureCounts (only necesary for PE sequencing)
+samtools sort file.bam -o file.sorted.bam
+
+
+#run featureCounts 
+featureCounts -T 10 -a mm10_knownGene.gtf -o featurecounts.txt file1_sorted.bam file2_sorted.bam file3_sorted.bam
+
+#you may need to edit featurecounts.txt file to remove first row, and first few columns to only have Geneid and then columns of your individual samples
