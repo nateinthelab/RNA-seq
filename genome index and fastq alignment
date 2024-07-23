@@ -10,6 +10,7 @@ www.youtube.com/watch?v=oRC406tbB8w
 wget https://hgdownload.soe.ucsc.edu/goldenPath/mm10/bigZips/mm10.fa.gz
 
 #download mm10 gtf file (https://hgdownload.soe.ucsc.edu/goldenPath/mm10/bigZips/genes/)
+## best to use ncbiRefseq gtf file ##
 wget https://hgdownload.soe.ucsc.edu/goldenPath/mm10/bigZips/genes/mm10.knownGene.gtf.gz
 
 #unzip fasta and gtf file
