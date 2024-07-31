@@ -27,9 +27,23 @@ STAR --runMode genomeGenerate --genomeDir star_ref/ --genomeFastaFiles mm10.fa -
 
 #make sure to unzip fastq before alignment (gunzip *.gz)
 #run STAR alignment (concatenate paired end reads with both fq files into one bam output)
-STAR --runThreadN 12 --genomeDir star_ref_mm10 --readFilesIn fastq/RNA1FDW_1.fq,fastq/RNA1FDW_2.fq --outFileNamePrefix RNA1FDW --outSAMtype BAM Unsorted
+ STAR --runThreadN 18 \
+         --genomeDir star_ref_mm10_Refseq \
+         --readFilesIn file1_1.fq.gz,file1_2.fq.gz \
+         --readFilesCommand zcat \
+         --outFileNamePrefix outputname \
+         --outSAMtype BAM Unsorted \
+         --sjdbGTFfile mm10.ncbiRefSeq.gtf \
+         --outFilterMultimapNmax 20 \
+         --alignSJoverhangMin 8 \
+         --alignSJDBoverhangMin 1 \
+         --outFilterMismatchNmax 999 \
+         --outFilterMismatchNoverLmax 0.04 \
+         --alignIntronMin 20 \
+         --alignIntronMax 1000000 \
+         --alignMatesGapMax 1000000
 
-#sort bam files prior to using featureCounts (only necesary for PE sequencing)
+#sort bam files prior to using featureCounts 
 samtools sort file.bam -o file.sorted.bam
 
 
