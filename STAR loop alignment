@@ -8,9 +8,6 @@
 # Define variables   
 THREADS=18                          # Number of threads to use
 
-# Create output directory if it doesn't exist
-mkdir -p ${OUTPUT_DIR}
-
 # Get a list of _1.fq.gz files
 FILE_LIST=(*_1.fq.gz)
 INDEX=0
