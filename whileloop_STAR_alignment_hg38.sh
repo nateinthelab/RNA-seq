@@ -24,7 +24,7 @@ while [ $INDEX -lt $NUM_FILES ]; do
     # Run STAR
     STAR --runThreadN ${THREADS} \
          --genomeDir star_ref_hg38_Refseq \
-         --readFilesIn ${R1},${R2} \
+         --readFilesIn ${R1} ${R2} \
          --readFilesCommand zcat \
          --outFileNamePrefix ${OUTPUT_PREFIX} \
          --outSAMtype BAM Unsorted \
