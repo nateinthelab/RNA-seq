@@ -214,7 +214,7 @@ dim(fil.counts)
 ## get log2 counts per million ##
 logcounts <- cpm(fil.counts, log=TRUE)
 
-## Library Size Normalization with TMM ##
+## Normalization with TMM ##
 # Scaling factor normalization based on the TMM method (trimmed mean of M-values in edgeR) # 
 fil.counts <- calcNormFactors(fil.counts, method = "TMM")
 norm.counts <- cpm(fil.counts, log = TRUE)
