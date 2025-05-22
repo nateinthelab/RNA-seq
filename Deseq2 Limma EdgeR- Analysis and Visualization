@@ -1,0 +1,705 @@
+#============================================================================ Exploratory Analysis ============================================================================#
+#============================================================================ Deseq2, edgeR, limma ============================================================================#
+
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(broom)
+library(ggpubr)
+library(Rmisc)
+library(RColorBrewer)
+library(viridisLite)
+library(viridis)
+library(pheatmap)
+library(clusterProfiler)
+library(GenomicFeatures)
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+library(ReactomePA)
+library(enrichplot)
+library(renv)
+library(tidyr)
+library(reshape2)
+library(knitr)
+library(FactoMineR)
+library(factoextra)
+library(DESeq2)
+library(DEGreport)
+library(edgeR)
+library(limma)
+library(rtracklayer)
+library(Trendy)
+library(rlang)
+library(enrichplot)
+library(DOSE)
+library(org.Mm.eg.db)
+library(PCAtools)
+library(magrittr)
+library(matrixStats)
+library(GseaVis)
+
+
+# ================================= load and visualize library size and raw count distribution ================================= #
+## load raw counts from featurecounts and sample plan ##
+rawcounts <- read.csv("featurecounts.csv", row.names = 1)
+rawcounts <- data.matrix(rawcounts)
+splan <- read.csv("sample_legend.csv", row.names = 1, header = TRUE)
+splan
+                         sname    subtype
+      file1_sorted.bam   sample-1_1  group1
+      file2_sorted.bam   sample-1_2  group1
+      file3_sorted.bam   sample-2_1  group2
+      file4_sorted.bam   sample-2_2  group2
+
+## update colnames of count table to your sample names
+colnames(rawcounts) <- as.character(splan[colnames(rawcounts), "sname"])
+
+## remove NA values from rawcounts table
+rawcounts <- na.omit(rawcounts)
+is.na(rawcounts)
+
+## How many reads do I have per sample? ##
+colSums(rawcounts)
+
+## make bar plot of library sizes ##
+libsize <- colSums(rawcounts)
+barplot(libsize, las = 2, main = "Barplot of lib size")
+
+## Draw distribution of raw counts (log2)
+boxplot(log2(1+rawcounts),
+        las=2, ylab="raw counts (log2)",col="gray50", pch=16)
+
+
+# =================================  Variance stabilization (vst) (only use vst for clustering and PCA plots) ================================= #
+library(DESeq2)
+## Load Data
+dds <- DESeqDataSetFromMatrix(rawcounts, DataFrame(condition=splan$subtype),
+                              ~condition)
+## Estmate size factors
+dds <- dds[rowSums(counts(dds)) > 0]
+
+## Run vst normalization
+rld <-vst(dds, blind=TRUE)
+vst_matrix <- assay(rld)
+#save vst matrix as a csv file
+write.csv(vst_matrix, file = "vst_normalized_counts/vst_normalized_counts.csv", row.names = TRUE)
+
+
+## r vst plotting
+par(mfrow=c(1,3))
+plot(counts(dds, normalized=FALSE)[,3:4],
+     pch=16, cex=0.3, xlim=c(0,20e3), ylim=c(0,20e3), main = "raw counts")
+plot(log2(counts(dds, normalized=FALSE)[,3:4]+1),
+     pch=16, cex=0.3, main = "log2 counts")
+plot(assay(rld)[,3:4], 
+     pch=16, cex=0.3, main="vst normalized counts")
+
+
+
+
+# ================================= Differential analysis with Deseq2 ================================= #
+## create dds (Deseq2) object, with raw counts and comparison to make (~condition, treatment)
+dds <- DESeqDataSetFromMatrix(rawcounts, DataFrame(condition=splan$subtype),
+                              ~condition)
+## Estimate size factors ##
+dds <- dds[rowSums(counts(dds)) > 0]
+
+## Run variance stabilizing (Vst) normalization, by  fitting dispersion-mean relations by the size factors generated above##
+rld <-vst(dds, blind=TRUE)
+
+## plot raw counts, log2counts, and vst normalized data to see effect
+par(mfrow=c(1,3))
+plot(counts(dds, normalized=FALSE)[,3:4],
+     pch=16, cex=0.3, xlim=c(0,20e3), ylim=c(0,20e3), main = "raw counts")
+plot(log2(counts(dds, normalized=FALSE)[,3:4]+1),
+     pch=16, cex=0.3, main = "log2 counts")
+plot(assay(rld)[,3:4], 
+     pch=16, cex=0.3, main="vst normalized counts")
+
+
+
+# ================================= PCA plots================================= #
+# standard DESeq2 PCA
+DESeq2::plotPCA(rld, intgroup = c("condition"), ntop=1000)
+
+##Other, prettier, visualization functions with FactoMineR
+library(FactoMineR) ## for PCA
+library(factoextra) ## for visualization functions
+
+##extract vst matrix 
+counts.vst <- assay(rld)
+
+##select most variable genes
+gvar <- apply(counts.vst, 1, var)
+mostvargenes <- order(gvar, decreasing=TRUE[1:000])
+
+##Run PCA
+res_pca <- PCA(t(counts.vst[mostvargenes,]), ncp=3, graph = FALSE)
+
+##Make beautiful plots
+fviz_eig(res_pca, addlabels = TRUE, ylim = c(0,50))
+fviz_eig(res_pca, label="none", habillage=as.factor(splan$subtype))
+
+fviz_pca_ind(res_pca, 
+             label="group",
+             habillage=as.factor(splan$subtype),
+             repel = TRUE,
+             palette = c("aaas"),
+             geom = "point",
+             title = "Methionine GFP/CRE RNAseq",
+             ggtheme= theme_bw())
+
+ggsave("plots/Methionine_GFPCRE_Vps15ff_rnaseq_complexPCA.png")
+
+### PCA tools ###
+library(PCAtools)
+library(magrittr)
+library(matrixStats)
+
+#mke rownames of splaan the splan$sname
+rownames(splan) <- splan$sname
+splan$sname <- NULL  # Optional: remove the now redundant column
+all(rownames(splan) == colnames(vst_matrix))  # Should return TRUE
+
+# run PCA tools
+p <- pca(vst_matrix, metadata = splan, removeVar = 0.1) # removeVar removes lower 10% of variables based on variance
+
+#biplot
+biplot(p,
+       lab = NULL,
+       colby = "subtype",
+       colkey = c("basal_gfp"='cadetblue',"starve_gfp"="lightblue","stim1h_gfp"="cornflowerblue", "stim4h_gfp"="deepskyblue4",
+                  "basal_cre"='antiquewhite',"starve_cre"="lightgrey","stim1h_cre"="darkgrey", "stim4h_cre"="black"),
+       gridlines.major = FALSE,
+       gridlines.minor = FALSE,
+       pointSize = 4,
+       legendPosition = "right")
+
+
+
+
+# ================================= Identify genes that contribute most to variance ================================= #
+## Look at the variable that contribute the most to the PC1 (Dim.1), or PC2 (Dim.2) ## 
+best.contrib <- names(sort(res_pca$var$contrib[,"Dim.1"], decreasing=TRUE))
+
+## Let's check the best gene contributors to variation (you should use tpm counts here, or vst normalized counts). Change main=best.contrib[] value to any integer, representing the rank of contribution to variance. 
+  # 1 being top contributor to variance ##
+barplot(rawcounts[best.contrib[5],], col="gray50",
+        border="white", las=2, main=best.contrib[1])
+
+
+
+
+# ================================= Hierachical Clustering ================================= #
+## Clustering of sampless on all genes ## 
+## Euclidian sample distance ##
+sampleDist <- dist(t(counts.vst))
+
+## Distance correlation with Ward method ##
+corDist <- cor(counts.vst, use = "pairwise.complete.obs", method = "pearson") 
+sampleDist <- as.dist(1-corDist)
+hc <- hclust(sampleDist, method="ward.D2")
+plot(hc)
+
+## separate out clusters for exporting ## (check package, you can cluster by row for genes) ##
+cutree(hc, k = number_of_clusters_you_wish_to_export)
+
+
+
+
+#================================= Heatmap of top variable genes ================================= #
+### load sample plan again if previously used for PCAtools, which changed sample plaan formatting ##
+splan <- read.csv("featurecounts_refseq/sample_legend.csv", row.names = 1, header = TRUE)
+splan
+
+## reorder samples in order you wish them to be displayed on heatmap ## 
+level_order_subtype <- factor(splan$subtype, level = c('basal_gfp','starve_gfp','stim1h_gfp','stim4h_gfp', 'basal_cre','starve_cre','stim1h_cre','stim4h_cre'))
+level_order_sname <- factor(splan$sname, level = c("basal_gfp_1","basal_gfp_2","basal_gfp_3",
+                                                   "starve_gfp_1","starve_gfp_2","starve_gfp_3",
+                                                   "stim1h_gfp_1","stim1h_gfp_2","stim1h_gfp_3",
+                                                   "stim4h_gfp_1","stim4h_gfp_2","stim4h_gfp_3",
+                                                   "basal_cre_1","basal_cre_2","basal_cre_3",
+                                                   "starve_cre_1","starve_cre_2","starve_cre_3",
+                                                   "stim1h_cre_1","stim1h_cre_2","stim1h_cre_3",
+                                                   "stim4h_cre_1","stim4h_cre_2","stim4h_cre_3"))
+mostvargenes <- order(gvar, decreasing=TRUE)[1:4000]
+annot <- data.frame(level_order_subtype, row.names = level_order_sname)
+
+pheatmap(counts.vst[mostvargenes,],
+         cluster_cols = FALSE,
+         cluster_rows = TRUE,
+         clustering_distance_rows = "correlation",
+         clustering_method = "ward.D2",
+         annotation_col = annot,
+         color = colorRampPalette(c("lightblue","grey4","dodgerblue"))(50),
+         border_color = NA,
+         show_rownames = FALSE,
+         scale = "row")
+
+ggsave("plots/top4000changedgenes_Methionine_Vps15ff_gfpcre_pheatmap.pdf")
+
+
+
+
+# ================================= Differential analysis with edgeR and limma ================================= #
+library(edgeR)
+library(limma)
+
+## need to calculate cpm values from raw counts first, or use tpm counts ##
+# make sure to filter out lowly expressed genes that have counts less than 20 #
+fil.counts <- DGEList(counts=rawcounts, group = splan$subtype)
+keep <- filterByExpr(fil.counts, min.count = 20) 
+df <- rawcounts[keep,]
+fil.counts <- fil.counts[keep,,keep.lib.sizes=FALSE]
+dim(fil.counts)
+  
+## get log2 counts per million ##
+logcounts <- cpm(fil.counts, log=TRUE)
+
+## Normalization with TMM ##
+# Scaling factor normalization based on the TMM method (trimmed mean of M-values in edgeR) # 
+fil.counts <- calcNormFactors(fil.counts, method = "TMM")
+norm.counts <- cpm(fil.counts, log = TRUE)
+fil.counts$samples
+
+## plot MA plots of normalized counts after TMM normalization ##
+par(mfrow=c(1,2))
+plotMD(logcounts, column = 3)  
+abline(h=0, col="grey")
+plotMD(fil.counts, column = 3)
+abline(h=0, col = "grey")
+
+## plot boxplots of log vs normalized counts ## 
+par(mfrow=c(1,3))
+boxplot(rawcounts, las=2, main = "raw counts")
+boxplot(logcounts, las=2, main = "log counts")
+boxplot(norm.counts, las=2, main = "TMM normalization")
+
+
+# ======================================== limma ======================================== #
+library(limma)
+##### Differential Analysis using limma #####
+## set design parameters for limma voom ##
+design <- model.matrix(~ 0 +subtype, data=splan)
+design
+
+vm <- voom(fil.counts, design, plot = TRUE)
+
+## Testing for statistical differences
+## Differential Analysis based on limma
+vfit <- lmFit(vm, design)
+
+## Compare GFP vs CRE in whichever condition you choose
+contrast <- makeContrasts(subtypestim4h_gfp - subtypestim4h_cre, levels = design)
+
+## Run test
+efit <- contrasts.fit(vfit, contrast)
+efit <- eBayes(efit)
+plotSA(efit)
+
+## Extract the results (allows you to export results in a table)
+res <- topTreat(efit, coef = 1, number=Inf)
+head(res) #res can then be exported
+
+# logFC > 1, p value < 0.05 - upregulated in gfp
+res_upreg_gfp <- res %>% 
+  filter(res$logFC > 1 & res$adj.P.Val < 0.05) 
+write.csv(res_upreg_gfp, "limma_output/DEG_limma_p0.05_logFC1_upreg_in_stim4h_gfp_vs_stim4h_cre.csv") ## export list of upregulated genes in gfp
+
+# logFC < -1, p value < 0.05 - upregulated in cre
+res_upreg_cre <- res %>% 
+  filter(res$logFC < -1 & res$adj.P.Val < 0.05) 
+write.csv(res_upreg_cre, "limma_output/DEG_limma_p0.05_logFC1_upreg_in_stim4h_cre_vs_stim4h_gfp.csv") ## export list of upregulated genes in cre
+
+# logFC below -1 or above 1, p value < 0.05 - both upregulated and downregulated genes in gfp vs cre
+res_upreg_cre <- res %>%
+  filter((logFC > 1 | logFC < -1) & adj.P.Val < 0.05)
+write.csv(res_upreg_cre, "limma_output/DEG_limma_p0.05_logFC1_upreg_and_downreg_in_stim4h_cre_vs_stim4h_gfp.csv") ## export list of upregulated genes in cre
+
+## Pvalue distribution (should be higher frequency at low pvalue, and lower frequency at high pvalue)
+hist(res$P.Value, main = "Pvalue histogram", col = "grey50", border = "white")
+
+## Significant DEGs between conditions chosen for contrast (gfp vs cre) 
+dres <- decideTests(efit, adj.P.value = 0.05, lfc = 1)
+dres <- dres[rownames(res),]
+summary(dres)
+
+## Pvalue distribution (should be higher frequency at low pvalue, and lower frequency at high pvalue)
+hist(res$P.Value, main = "Pvalue histogram", col = "grey50", border = "white")
+
+## Significant DEGs between conditions chosen for contrast  
+dres <- decideTests(efit, p.value = 0.05, lfc = 1)
+dres <- dres[rownames(res),]
+summary(dres)
+
+deg <- rownames(dres[which(dres[,1]!=0),])
+
+## Looking at the results
+par(mfrow=c(1,1))
+mygene <- rownames(res)[3]
+barplot(norm.counts[mygene,], 
+        ylim = c(0,15),
+        las=2, 
+        main=mygene, 
+        ylab = "Normalized counts", 
+        col = "grey50", 
+        border = "white")
+
+## Heatmap of most differentiall expressed genes
+par(mfrow=c(1,1))
+idx.sub <- which(splan$subtype=="EBSS4h_gfp" | splan$subtype=="EBSS4h_cre")
+data.sub <- norm.counts[deg[1:100], idx.sub]
+pheatmap(data.sub,
+         show_rownames=FALSE)
+
+## MAplot (mean/average) where 'M' stands for 'fold-change', and 'A' for mean expression
+plot(res$AveExpr, res$logFC, xlab="A - Mean Expression", ylab = "M - logFC",
+     col=ifelse(res$adj.P.Val<0.05, "red", "black"), pch=16, cex=0.5)
+
+## Volcano plot
+volcanoplot(efit, highlight = 100)
+
+## pretty volcano plot with ggplot2 (add in gene names)
+##modded to have just downreg genes colored separately 
+LimmaVolcano <- function(res, main="", fct=1.5, pt=0.05){
+  stopifnot(require(ggplot2))
+  res$sign <- 0
+  res$sign[which(res$adj.P.Val < pt & res$logFC > fct)] <- 1      # upregulated
+  res$sign[which(res$adj.P.Val < pt & res$logFC < -fct)] <- -1     # downregulated
+  p <- ggplot(data=res, aes(x=logFC, y=-log10(adj.P.Val), colour=as.factor(sign))) +
+    theme_classic() +
+    geom_point(alpha=0.7, size=2) +
+    scale_color_manual(name="", values=c("1"="dodgerblue4", "0"="grey", "-1"="lightblue")) +
+    ggtitle(paste0("Volcano Plot - Limma ", main)) +
+    theme(legend.position = "none") +
+    xlab("log2 fold change") +
+    ylab("-log10 adj pvalue") +
+    geom_vline(xintercept=c(-fct, fct), linetype=2) +
+    geom_hline(yintercept=-log10(pt), linetype=2)
+  p
+}
+LimmaVolcano(res, fct=1, pt=0.05, main= "stim1h gfp vs stim1h cre")
+
+##original
+LimmaVolcano <- function(res, main="", fct=1.5, pt=0.05){ stopifnot(require(ggplot2))
+  res$sign <- 0
+  res$sign[which(res$adj.P.Val < pt & abs(res$logFC) > fct)] <- 1
+  p <- ggplot(data=res, aes(x=logFC, y=-log10(adj.P.Val), colour=as.factor(sign))) + theme_classic() + geom_point(alpha=0.6, size=2) +
+    scale_color_manual(name="", values=c("1"="dodgerblue", "0"="grey")) + 
+    ggtitle(paste0("Volcano Plot - Limma ", main)) + 
+    theme(legend.position = "none") + xlab("log2 fold change") + 
+    ylab("-log10 adj pvalue") + 
+    geom_vline(xintercept=c(-fct, fct), linetype=2) + 
+    geom_hline(yintercept=-log10(pt), linetype=2)
+  p }
+LimmaVolcano(res, fct=1, pt=0.05, main= "stim4h gfp vs stim4h cre")
+
+
+
+# ========================== DESEq2 LRT anlysis ========================== #
+library(DESeq2)
+library(DEGreport)
+
+##Load data
+my_countData <- read.csv("featurecounts_refseq/featurecounts.csv", header=TRUE, sep="\t", row.names=1)
+str(my_countData)
+
+## remove NA values from myCountData table
+my_countData <- na.omit(my_countData)
+is.na(my_countData)
+
+##Convert Data to Matrix
+my_countData <- as.matrix(my_countData)
+
+##Load Column data, denoting which samples, genotypes, and conditions are present in your data set
+my_colData <-read.csv("featurecounts_refseq/sample_legend.csv", header=TRUE, sep="\t", row.names=1)
+
+##Creates matrix with sample, condition, and genotype along with raw counts file
+my_dds <- DESeqDataSetFromMatrix(countData = my_countData,
+                                 colData   = my_colData,
+                                 design    = ~ genotype + condition + genotype:condition)
+
+##Run DESeq2 analysis to normalize raw counts and prepare for multifactorial compaison
+my_dds_lrt <- DESeq(my_dds, test = "LRT", reduced = ~ genotype + condition)
+resultsNames(my_dds_lrt)
+res_LRT <- results(my_dds_lrt)
+summary(my_dds_lrt)
+
+# Create a tibble for LRT results
+res_LRT_tb <- res_LRT %>%
+  data.frame() %>%
+  rownames_to_column(var="gene") %>% 
+  as_tibble()
+
+# Subset to return genes with padj < 0.05
+sigLRT_genes <- res_LRT_tb %>% 
+  filter(padj < 0.05)
+
+# Get number of significant genes
+nrow(sigLRT_genes)
+
+# Get top 10 most significant interaction genes
+top10_genes <- sigLRT_genes %>%
+  arrange(padj) %>%
+  slice_head(n = 10) %>%
+  pull(gene)
+
+# Get normalized expression values (vst)
+vst_mat <- assay(vst(my_dds, blind = FALSE))
+
+# Subset for top 10 genes
+vst_top10 <- vst_mat[top10_genes, ]
+
+# Convert to long format for ggplot
+plot_df <- vst_top10 %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "gene") %>%
+  pivot_longer(cols = -gene, names_to = "sample", values_to = "expression")
+
+# Add metadata (genotype, condition) to the plot data
+meta <- as.data.frame(colData(my_dds)[, c("genotype", "condition")]) %>%
+  rownames_to_column(var = "sample")
+
+plot_df <- left_join(plot_df, meta, by = "sample")
+
+# Ensure time is ordered correctly for plotting
+plot_df$condition <- factor(plot_df$condition, levels = c("basal", "starve", "stim1h", "stim4h"))
+
+# Plot: expression over time, faceted by gene
+ggplot(plot_df, aes(x = condition, y = expression, color = genotype, group = interaction(genotype, sample))) +
+  geom_line(alpha = 0.3) +
+  stat_summary(fun = mean, geom = "line", aes(group = genotype), size = 1.2) +
+  facet_wrap(~ gene, scales = "free_y") +
+  theme_bw() +
+  labs(title = "Top 10 Genes with Significant Genotype x Condition Interaction",
+       x = "Condition (Timepoint)", y = "Normalized Expression (vst)") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+# ========================== GSEA in R  ========================== #
+### gene list preparation from limma DEG list ###
+
+# Load the data, 
+limma_DEG_upreg_gfp_basal <- read.csv("limma_output/DEG_limma_p0.05_logFC1_upreg_in_basal_gfp_vs_basal_cre.csv")
+limma_DEG_upreg_gfp_basal <- as.data.frame(limma_DEG_upreg_gfp_basal)
+
+#remove rows with decimals (these are transcript variants, and not used in downstream analysis anyways)
+#make logFC values all positive only if comparing individual genotypes/groups. if neg and pos logFCs are in your limma_DEG file, don't make all positive. 
+limma_DEG_upreg_gfp_basal <- limma_DEG_upreg_gfp_basal[!grepl("\\.", limma_DEG_upreg_gfp_basal$X),]
+limma_DEG_upreg_gfp_basal$logFC <- abs(limma_DEG_upreg_gfp_basal$logFC)
+
+#rename X as SYMBOL
+colnames(limma_DEG_upreg_gfp_basal)[colnames(limma_DEG_upreg_gfp_basal) == "X"] <- "SYMBOL"
+colnames(limma_DEG_upreg_gfp_starve)[colnames(limma_DEG_upreg_gfp_starve) == "X"] <- "SYMBOL"
+ 
+### Keep only the fold change column for downstream gsea pathway analysis. change only the limma_DEG onject for each time to run new gsea analysis ####
+limma_DEG <- limma_DEG_gfp_vs_cre_stim4h[,c("SYMBOL","logFC")] #####++ dont change limma_DEG object name, just upreg/downreg_limma list object ++#####
+
+# map gene symbols to their respective entrezID
+genes <- limma_DEG$SYMBOL
+require(org.Mm.eg.db)
+mapIds(
+  org.Mm.eg.db,
+  keys = genes,
+  column = 'ENTREZID',
+  keytype = 'SYMBOL')
+
+entrez_limma <- select(
+  org.Mm.eg.db,
+  keys = genes,
+  column = c('SYMBOL', 'ENSEMBL', 'ENTREZID'),
+  keytype = 'SYMBOL')
+head(entrez_limma)
+
+# merge limma_DEG with entrez dataframes to replace all gene symbols with entrtez ID
+merged_limma <- merge(limma_DEG,entrez_limma, by = "SYMBOL")
+
+#reorder columns to have entrezID and then logFC
+merged_limma <- merged_limma[,c("ENTREZID","logFC")]
+
+# remove duplicated and NA values from ENTREZID column
+merged_limma <- merged_limma[!duplicated(merged_limma$ENTREZID), ]
+merged_limma <- merged_limma[!is.na(merged_limma$ENTREZID),]
+merged_limma <- merged_limma[order(merged_limma$logFC, decreasing = TRUE),]
+
+## prepare geneList based on DOSE github (https://github.com/YuLab-SMU/DOSE/wiki/how-to-prepare-your-own-geneList)
+geneList = merged_limma[,2]
+names(geneList) = as.character(merged_limma[,1])
+geneList = sort(geneList,decreasing = TRUE)
+
+################# Running DOSE #################
+# https://yulab-smu.top/biomedical-knowledge-mining-book/clusterprofiler-go.html # 
+
+################################################
+### if KEGG enrichment does not work, do the following to run KEGG locally ###
+#KEGG (download kegg.db from  [https://www.bioconductor.org/packages/3.11/data/annotation/src/contrib/KEGG.db_3.2.4.tar.gz])
+#then : install.packages("~/Desktop/path where KEGG.db downloaded/KEGG.db_3.2.4.tar.gz", repos = NULL, type = "source")
+#then use the "use_internal_data = TRUE" command on enrichKEGG
+################################################
+
+## load geneList into DOSE analysis ## 
+gene <- names(geneList) [abs(geneList) > 1]
+
+###### GO PATHWAY ANALYSIS ######
+genes_GO <- enrichGO(gene,
+                     keyType = "ENTREZID",
+                     universe = names(geneList),
+                     OrgDb = org.Mm.eg.db,
+                     ont = "BP",
+                     readable = TRUE)
+write.csv(genes_GO, file = "DOSE_gsea/DOSE_output/limma_DEG_upreg_gfp_stim4h_GOBP.csv")
+
+goGSEA <- gseGO(geneList = geneList,
+                     keyType = "ENTREZID",
+                     OrgDb = org.Mm.eg.db,
+                     ont = "BP", # Biological Processes
+                     #pvalueCutoff = 0.05,
+                     by = "fgsea",
+                     verbose = TRUE)
+write.csv(goGSEA, file = "DOSE_gsea/DOSE_output/limma_DEG_gfp_vs_cre_stim4h_goGSEA.csv")
+
+## plots for GO BP ##
+gseaplot2(goGSEA, geneSetID = c("GO:0023056","GO:0048584", "GO:0009893"), ES_geom = "line",base_size = 8, rel_heights = c(1.3,0.3,0.5),
+          color = c("dodgerblue4", "dodgerblue3","cornflowerblue"),
+          title = "GO - limma_DEG_upreg_gfp_stim1h, DEG limma")+
+          theme_minimal()
+ggsave("DOSE_output_plots/limma_DEG_upreg_gfp_starve_gseaplot_lines.png")
+
+
+###### KEGG PATHWAY ANALYSIS ######
+genes_KEGG <- enrichKEGG(gene,
+                         organism = 'mmu',
+                         minGSSize = 1,
+                         use_internal_data = F)
+write.csv(genes_KEGG, file = "DOSE_gsea/DOSE_output/limma_DEG_upreg_gfp_stim4h_KEGG.csv")
+
+genes_gseaKEGG <- gseKEGG(geneList = geneList,
+                          organism = 'mmu',
+                          minGSSize = 1,
+                          verbose = TRUE,
+                          use_internal_data = F)
+write.csv(genes_gseaKEGG, file = "DOSE_gsea/DOSE_output/limma_DEG_upreg_gfp_stim4h_gseKEGG.csv")
+
+## plots for KEGG  ##
+gseaplot2(genes_gseaKEGG, geneSetID = c(1), ES_geom = "line",base_size = 8, rel_heights = c(1.3,0.3,0.5),
+          color = c("purple"),
+          title = "KEGG - limma_DEG_upreg_gfp_stim1h, DEG limma")
+ggsave("DOSE_output_plots/limma_DEG_upreg_gfp_starve_gseaplot_lines.png")
+
+
+
+###### REACOME ANALYSIS ######
+genes_reactome <- gsePathway(geneList = geneList,
+                             pvalueCutoff = 0.05,
+                             organism = "mouse",
+                             verbose = TRUE)
+write.csv(genes_reactome, file = "DOSE_gsea/DOSE_output/limma_DEG_upreg_gfp_stim4h_gseReactome.csv")
+## plots for Reactome ##
+gseaplot2(genes_reactome, geneSetID = c(1:5,7), ES_geom = "dot", base_size = 8, rel_heights = c(1.5,0.5,0.5),
+          title = "Reactome - upreg in feno-Vps15LKO vs Vps15LKO, DEG limma")
+
+
+
+#########===== Additional GSEA enrichment plot visualization using GseaVis =====#########
+# https://junjunlab.github.io/gseavis-manual/basic-usage.html#marking-gene-names #
+# GseaVis can work with gseKEGG, gseGO, gsePathway (reactome) objects
+library(GseaVis)
+
+gseaNb(object = goGSEA,
+       geneSetID = c("GO:0043066","GO:0051246", "GO:0010604"),
+       curveCol = c("dodgerblue4","dodgerblue3","cornflowerblue"),
+       subPlot = 2)
+
+gseaNb(object = goGSEA,
+       geneSetID = c("GO:0032502","GO:0019538", "GO:0033554"),
+       curveCol = c("dodgerblue4", "dodgerblue3","cornflowerblue","cadetblue2", "skyblue1","lightblue"),
+       subPlot = 2)
+
+# to add gene name labels to plot
+#  mygenes <- c("gene1", "gene2","gene3")
+#  gseaNb(object = goGSEA,
+#      geneSetID = c("GO:0023056","GO:0048584", "GO:0009893"),
+#      subPlot = 2,
+#       addgene = mygenes)
+
+
+
+
+
+################### make a pheatmap #######################
+## pheatmaap ## 
+setwd("/Users/NateHenneman/Desktop/PhD/RNA-seq/methionine_RNAseq_December_2022/R/pheatmap")
+
+## csv with data format of (fill in with own data): ##
+#example table#
+      Tx_group1  Tx_group2
+Gene1     50        100
+Gene2     30         12
+Gene3     300        64
+
+degs_all <- read.csv("log2_DEGS_all_means.csv", row.names = 1)
+degs_all <- data.matrix(degs_all)
+
+##create datafram for annotation heatmap
+#example table#
+        genotype  treatment
+Group1    WT          fed
+Group2    WT          fast
+Group3    KO          fed
+Group4    KO          fast
+
+df_met <- read.csv("annot_groups.csv", row.names = 1)
+
+###All Genes
+pheatmap(
+  mat = (degs_all),
+  annotation_col = df_met,
+  annotation_colors = list(genotype=c(WT="black",Vps15KO="purple"),
+                           methionine=c(all="violetred1",starve_4h = "violetred2", stim_1h = "violetred3", stim_4h = "violetred4")),
+  scale = "row",
+  show_colnames = FALSE,
+  show_rownames = FALSE,
+  cluster_cols = FALSE,
+  cluster_rows = TRUE,
+  color = mako(10),
+  cutree_cols = 2,
+  cutree_rows = 6,
+  main = "transcriptional response to methionine starvation and stimulation")
+
+setwd("/Users/NateHenneman/Desktop/PhD/RNA-seq/methionine_RNAseq_December_2022/R/plots")
+ggsave("pheatmap_DEGS_all.pdf")
+
+
+################### make individual gene plots #######################
+#example table to load in as .txt file#
+genotype  treatment   Gene1   Gene2  
+  WT          fed      120     764
+  KO          fed      12      43
+
+downreg_genes <- read_table("all_genes_plots.txt", col_names = T)
+downreg_genes_SE <- summarySE(downreg_genes, measurevar="Zcchc14", groupvars=c("methionine","genotype"))
+downreg_genes$genotype <- factor(downreg_genes$genotype,
+                          levels = c("WT", "KO"))
+
+downreg_genes %>%
+  ggplot(aes(methionine,Zcchc14,
+             group = genotype,
+             color = genotype))+
+  ggtitle("Zcchc14")+
+  geom_jitter(position = position_jitter(0.2))+
+  geom_line(aes(group = genotype), data = downreg_genes_SE, linewidth = 2)+
+  geom_errorbar(aes(ymin = Zcchc14-se, ymax = Zcchc14+se), data = downreg_genes_SE, width = 0.2)+
+  scale_y_continuous(limits = c(0,(max(downreg_genes$Zcchc14)+3)), expand = expansion(mult = c(0,0.05)))+
+  #scale_x_continuous(breaks = seq(0, 12, by = 3))+
+  scale_color_manual(values=c("black","blue"))+
+  scale_fill_discrete(breaks=c("WT","KO"))+
+  xlab("") + 
+  ylab("normalized counts")+
+  theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(), 
+                     panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  theme(axis.title.x = element_text(color = "black", size =15, face = "bold"),
+        axis.title.y = element_text(color = "black", size = 15, face = "bold"),
+        axis.text=element_text(color = "black", size =15, face = "bold"))
+
+ggsave("plots/Zcchc14.png")
+
